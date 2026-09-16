@@ -62,9 +62,9 @@ Two consequences drive the design:
 
 - The detector head regresses a **dense sub-pixel offset field**, not just a heatmap peak,
   and inference averages over the four axis flips. Integer-pixel peaks alone are not enough.
-- Missing a detection is far worse than an extra one. Dropping 10% of centres costs 16
-  points; *two* false positives per frame cost 1. **Run the detector at high recall** —
-  push the threshold down until precision starts to cost recall, not the other way round.
+- Missing a detection is far worse than an extra *random* one. Dropping 10% of centres
+  costs 16 points; two uniformly random false positives per frame cost 1. But see the
+  warning below — this does **not** mean you should drive the threshold to zero.
 
 | perturbation          | score  |
 | --------------------- | ------ |
@@ -76,11 +76,28 @@ Two consequences drive the design:
 | +1.0 false pos./frame | 0.9938 |
 | +2.0 false pos./frame | 0.9862 |
 
-False positives are close to free for a structural reason worth knowing: a spurious
-detection is uncorrelated between frames, so association leaves it as a one-frame track,
-and a one-frame track has no consecutive pair and therefore emits no event. Only a
-*persistent* phantom — a second peak riding on a real ant across many frames — actually
-costs anything, which is what the 5×5 NMS is there to prevent.
+Random false positives are close to free for a structural reason: a spurious detection
+uncorrelated between frames leaves a one-frame track, and a one-frame track has no
+consecutive pair, so it emits no event. Only a *persistent* phantom costs anything.
+
+**A real detector's false positives are not random, and this is where the simulation
+misleads.** Sweeping the threshold on an actual trained model, lowering it buys recall and
+*loses* score:
+
+| threshold | recall | precision | detections/frame | end-to-end |
+| --------- | ------ | --------- | ---------------- | ---------- |
+| 0.05      | 0.643  | 0.497     | 35.0             | 0.5188     |
+| 0.10      | 0.638  | 0.558     | 31.0             | 0.5453     |
+| 0.15      | 0.628  | 0.587     | 29.0             | 0.5578     |
+| 0.20      | 0.611  | 0.604     | 27.4             | 0.5675     |
+| **0.25**  | 0.604  | 0.636     | 25.7             | **0.5713** |
+| 0.30      | 0.590  | 0.667     | 24.0             | 0.5648     |
+| 0.35      | 0.489  | 0.691     | —                | 0.4233     |
+
+A weak peak sits on the *same* image structure frame after frame, so it is exactly the
+persistent phantom the random model does not capture: it survives association, forms a
+multi-frame track, and emits events. Tune the threshold empirically with
+`tools/sweep_decode.py`; do not infer it from the perturbation table.
 
 ### Do not smooth the trajectories
 
@@ -187,6 +204,7 @@ learned and has no tunable parameters.
 | `acg/metric.py` | the official Hungarian row metric |
 | `tools/test_geometry.py` | asserts the crossing rule and metric against the statement |
 | `tools/ceiling.py` | reproduces the evidence above (CPU only, ~1 min) |
+| `tools/sweep_decode.py` | tunes decode/association against a saved model, no retraining |
 | `tools/validate.py` | held-out-recording validation, end to end |
 | `tools/benchmark.py` | GPU throughput probe used to size the step budget |
 | `tools/check_submission.py` | validates a submission against every format rule |
@@ -234,20 +252,48 @@ batch than the default.
 > Note: `channels_last` memory format was measured **5.2× slower** than contiguous for this
 > model on this workload. Do not re-enable it without re-timing.
 
+## Measured end to end
+
+Held-out recordings 4 and 5 (260 and 170 frames — the sizes of the two hidden test
+recordings), 330 queries, one model trained for 2500 steps at batch 4 on a **contended
+laptop RTX 3050**:
+
+| | |
+| --- | --- |
+| End-to-end score | **0.5713** |
+| Detection recall / precision | 0.604 / 0.636 |
+| Localisation error (matched, mean) | 1.83 px |
+| Perfect-centre ceiling | 0.9984 |
+
+**Treat this as a floor, not a forecast.** It is ~5.7 epochs; the shipped defaults are
+9000 steps at batch 8 across 2 models, roughly 6× the training, and the loss was still
+falling steeply when this run ended. The two gaps are plain in the numbers and both are
+training-limited:
+
+- **Localisation is 1.83 px** against a noise floor of 0.057 px. The jitter table says
+  2 px alone caps you near 0.61, so this is the dominant loss. Nothing about the data
+  forces it — the information is in the pixels.
+- **Recall is 0.60 even at threshold 0.05**, so ~36% of ants are not found at any
+  threshold. That is the model failing to fire, not a decode setting.
+
+Both improve with training budget, model capacity and ensembling, which is where the A10G
+run should spend its 90 minutes.
+
 ## If you want to push the score higher
 
 Everything here moves detection quality, because that is the only thing that moves the
 score. Ordered by expected value per unit of effort:
 
-1. **Lower `THRESHOLD`.** The perturbation table says extra detections are nearly free and
-   misses are expensive, so the optimum sits well below the usual 0.5. Sweep it with
-   `tools/validate.py --threshold ...`; it costs nothing beyond one detection pass.
+1. **More steps and a wider model**, sized by `tools/benchmark.py` — by far the biggest
+   lever, because both measured gaps (1.83 px localisation, 0.60 recall) are training
+   limited. An A10G has 24 GB, so `--batch-size 16` or more raises images/second.
 2. **More models in the ensemble.** `detect_stack` averages heatmaps and offsets across
    models. Averaging is exactly the operation that suppresses localisation jitter, which is
    the dominant error term — the same mechanism that makes the 4-flip TTA worth its cost.
-3. **More steps / a wider model**, sized by `tools/benchmark.py`. An A10G has 24 GB, so
-   `--batch-size 16` or more is available and raises images/second.
-4. **`max_gap=2` together with `fill_gap=1`.** These two go as a pair. `max_gap` is the
+3. **Re-sweep `THRESHOLD` once trained**, with `tools/sweep_decode.py` against a saved
+   model — it needs no retraining, one detection pass per threshold. The optimum moves with
+   detector quality, so the shipped 0.25 is a starting point, not a constant of nature.
+4. **Re-check the `max_gap` / `fill_gap` pair.** These two go as a pair. `max_gap` is the
    largest frame separation association will bridge, so the default `1` means
    consecutive-only and one missed detection ends the track; `2` lets the track survive a
    one-frame hole. Even then the crossing rule needs a position at *both* endpoints, so

@@ -34,10 +34,16 @@ WIDTH = 32
 DEPTH = 4
 BATCH_SIZE = 8
 LR = 2e-3
-THRESHOLD = 0.30
+
+# Decode and association settings, swept with tools/sweep_decode.py on held-out
+# recordings. Chosen to be near-optimal across detector quality rather than fitted to
+# one checkpoint: a tighter 15 px gate scored 0.007 better with a deliberately
+# undertrained model, but costs 0.02 at the perfect-centre ceiling, so it only suits a
+# weak detector. Re-sweep after a full-length run.
+THRESHOLD = 0.25
 MAX_DIST = 25.0
-MAX_GAP = 1
-FILL_GAP = 0
+MAX_GAP = 2
+FILL_GAP = 1
 MAX_EVENTS = 200
 
 
