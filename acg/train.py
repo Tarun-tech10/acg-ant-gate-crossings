@@ -91,13 +91,15 @@ class Trainer:
                  lr=2e-3, batch_size=8, channels=3):
         torch.manual_seed(seed)
         np.random.seed(seed)
-        torch.backends.cudnn.benchmark = True
+        if device == "cuda":
+            torch.backends.cudnn.benchmark = True
         self.device = device
         self.resid = torch.from_numpy(resid)
         self.pixel_centers = pixel_centers
         self.model = CenterNet(cin=channels, width=width, depth=depth).to(device)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
-        self.scaler = torch.amp.GradScaler(device)
+        self.cuda = device == "cuda"
+        self.scaler = torch.amp.GradScaler(device, enabled=self.cuda)
         self.batch_size = batch_size
         self.gen = torch.Generator(device=device)
         self.gen.manual_seed(seed + 1)
@@ -124,7 +126,7 @@ class Trainer:
             off = torch.from_numpy(off).to(self.device, non_blocking=True)
             msk = torch.from_numpy(msk).to(self.device, non_blocking=True)
             x, hm, off, msk = augment(x, hm, off, msk, self.gen)
-            with torch.amp.autocast(self.device, dtype=torch.float16):
+            with torch.amp.autocast(self.device, dtype=torch.float16, enabled=self.cuda):
                 phm, poff = self.model(x)
                 loss_hm = focal_loss(phm.float(), hm)
                 denom = msk.sum().clamp(min=1.0)

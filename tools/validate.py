@@ -24,6 +24,25 @@ from acg.train import Trainer, to_pixel_centers
 DEFAULT_DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
 
+def make_logger(path=""):
+    """Write progress straight to a file as well as stdout.
+
+    Console redirection on Windows buffers a child process's stdout even under
+    `python -u`, which makes a long run look frozen. Owning the file handle here
+    removes the ambiguity.
+    """
+    handle = open(path, "w", buffering=1) if path else None
+
+    def log(*parts):
+        line = " ".join(str(p) for p in parts)
+        if handle is not None:
+            handle.write(line + "\n")
+            handle.flush()
+        print(line, flush=True)
+
+    return log
+
+
 def detection_report(pred_centers, centers, tol=3.0):
     errs, tp, fp, fn = [], 0, 0, 0
     for f, d in pred_centers.items():
@@ -65,30 +84,33 @@ def main():
     ap.add_argument("--save-model", default="")
     ap.add_argument("--save-detections", default="")
     ap.add_argument("--out", default="")
+    ap.add_argument("--log-file", default="")
     args = ap.parse_args()
+
+    log = make_logger(args.log_file)
 
     train, test, centers = load_tables(args.data)
     chains = build_sequences(list(train["fr"]))
-    print("recordings:", [len(c) for c in chains])
-    bank = build_frame_bank(args.data, chains)
+    log("recordings:", [len(c) for c in chains])
+    bank = build_frame_bank(args.data, chains, log=log)
 
     hold = set(args.holdout)
     is_hold = np.isin(bank.chain_of, list(hold))
-    print(f"train frames {int((~is_hold).sum())}  holdout frames {int(is_hold.sum())}")
+    log(f"train frames {int((~is_hold).sum())}  holdout frames {int(is_hold.sum())}")
 
     pixel_centers = to_pixel_centers([centers[f] for f in bank.order])
     tr_idx = np.nonzero(~is_hold)[0]
     t0 = time.time()
     trainer = Trainer(bank.resid, pixel_centers, width=args.width, depth=args.depth,
                       batch_size=args.batch_size, lr=args.lr, seed=args.seed)
-    model = trainer.fit(tr_idx, bank.neighbours, steps=args.steps)
+    model = trainer.fit(tr_idx, bank.neighbours, steps=args.steps, log=log)
     train_time = time.time() - t0
-    print(f"train time {train_time:.0f}s")
+    log(f"train time {train_time:.0f}s")
     if args.save_model:
         import torch
         torch.save({"state_dict": model.state_dict(), "width": args.width,
                     "depth": args.depth}, args.save_model)
-        print(f"saved model to {args.save_model}")
+        log(f"saved model to {args.save_model}")
 
     ho_idx = np.nonzero(is_hold)[0]
     hold_frames = {bank.order[i] for i in ho_idx}
@@ -96,7 +118,7 @@ def main():
     ho_chains = [c for ci, c in enumerate(chains) if ci in hold]
     queries = [(r.fr, r.g) for r in rows]
     targ = [r.ev for r in rows]
-    print(f"holdout queries: {len(rows)}")
+    log(f"holdout queries: {len(rows)}")
 
     results = []
     for thr in args.threshold:
@@ -105,7 +127,7 @@ def main():
                            threshold=thr, tta=not args.no_tta)
         pred_centers = {bank.order[i]: d for i, d in zip(ho_idx, det)}
         rep = detection_report(pred_centers, centers)
-        print(f"thr {thr}: recall {rep['recall']:.4f} precision {rep['precision']:.4f} "
+        log(f"thr {thr}: recall {rep['recall']:.4f} precision {rep['precision']:.4f} "
               f"loc mean {rep['loc_mean']:.3f} p90 {rep['loc_p90']:.3f} "
               f"({time.time() - t0:.0f}s)")
         if args.save_detections:
@@ -121,12 +143,12 @@ def main():
                     preds = predict_events(queries, ho_chains, pred_centers,
                                            max_dist=md, max_gap=mg, fill_gap=fg)
                     s = mean_score(preds, targ)
-                    print(f"    max_dist {md} max_gap {mg} fill_gap {fg}: "
+                    log(f"    max_dist {md} max_gap {mg} fill_gap {fg}: "
                           f"END-TO-END {s:.4f}")
                     results.append({"threshold": thr, "max_dist": md, "max_gap": mg,
                                     "fill_gap": fg, "score": s, **rep})
     best = max(results, key=lambda r: r["score"])
-    print(f"BEST {best['score']:.4f} thr={best['threshold']} "
+    log(f"BEST {best['score']:.4f} thr={best['threshold']} "
           f"max_dist={best['max_dist']} max_gap={best['max_gap']} "
           f"fill_gap={best['fill_gap']}")
     if args.out:

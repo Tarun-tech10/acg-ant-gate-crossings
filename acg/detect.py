@@ -18,7 +18,8 @@ def _forward_tta(model, x, tta):
             xi = xi.flip(-1)
         if fy:
             xi = xi.flip(-2)
-        with torch.amp.autocast(x.device.type, dtype=torch.float16):
+        dev = x.device.type
+        with torch.amp.autocast(dev, dtype=torch.float16, enabled=(dev == "cuda")):
             hm, off = model(xi)
         hm = torch.sigmoid(hm.float())
         off = off.float()
@@ -36,7 +37,7 @@ def _forward_tta(model, x, tta):
 
 @torch.no_grad()
 def detect_stack(models, resid, neighbours, idx, device="cuda", threshold=0.30,
-                 batch_size=8, tta=True, nms_kernel=5):
+                 batch_size=8, tta=True, nms_kernel=5, max_per_frame=200):
     """Return a list of (n,2) normalised centres, one per index in `idx`.
 
     `models` may be a single module or a list whose heatmaps and offsets are averaged.
@@ -70,9 +71,12 @@ def detect_stack(models, resid, neighbours, idx, device="cuda", threshold=0.30,
         sc = hm[b, 0, ys, xs].cpu().numpy()
         bb = b.cpu().numpy()
         for k in range(len(part)):
-            m = bb == k
-            pts = np.stack([np.clip(px[m], 0, W - 1) / W,
-                            np.clip(py[m], 0, H - 1) / H], 1)
-            order = np.argsort(-sc[m])
+            sel = bb == k
+            pts = np.stack([np.clip(px[sel] / W, 0.0, 1.0),
+                            np.clip(py[sel] / H, 0.0, 1.0)], 1)
+            # Highest-scoring first, and capped: a frame never holds more than a few
+            # dozen ants, so a larger count means a degenerate heatmap, and an
+            # unbounded one would make the association cost matrix explode.
+            order = np.argsort(-sc[sel])[:max_per_frame]
             out.append(pts[order].astype(np.float64))
     return out

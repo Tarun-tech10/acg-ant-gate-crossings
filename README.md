@@ -176,8 +176,10 @@ learned and has no tunable parameters.
 | `acg/detect.py` | flip-averaged decoding to sub-pixel centres |
 | `acg/track.py` | association and the crossing-extraction geometry |
 | `acg/metric.py` | the official Hungarian row metric |
+| `tools/ceiling.py` | reproduces the evidence above (CPU only, ~1 min) |
 | `tools/validate.py` | held-out-recording validation, end to end |
 | `tools/benchmark.py` | GPU throughput probe used to size the step budget |
+| `tools/check_submission.py` | validates a submission against every format rule |
 | `data/` | the public dataset |
 
 ## Running
@@ -185,12 +187,25 @@ learned and has no tunable parameters.
 ```bash
 pip install -r requirements.txt          # install torch for your CUDA build first
 
+python3 tools/ceiling.py --data data     # CPU, ~1 min: reproduces the tables above
 python3 tools/benchmark.py               # step time on this GPU -> recommended STEPS
 python3 solution.py data submission.csv  # the graded run
+python3 tools/check_submission.py data submission.csv
 
 # held-out-recording validation (trains a model, reports the real metric)
-python3 tools/validate.py --data data --holdout 4 5 --steps 2500 --threshold 0.2 0.3 0.4
+python3 tools/validate.py --data data --holdout 4 5 --steps 2500 \
+    --threshold 0.15 0.25 0.35 --fill-gap 0 1 --save-model m.pt
 ```
+
+Before any GPU run, check the card is actually free:
+
+```bash
+nvidia-smi --query-compute-apps=pid,name --format=csv,noheader
+```
+
+A previous run that was interrupted can leave a CUDA context alive holding VRAM. The
+symptom is not an error — training simply runs ~25× slower as it spills to host memory,
+or the process dies with no traceback. Kill leftovers before timing anything.
 
 ### Budget
 
@@ -207,6 +222,35 @@ batch than the default.
 
 > Note: `channels_last` memory format was measured **5.2× slower** than contiguous for this
 > model on this workload. Do not re-enable it without re-timing.
+
+## If you want to push the score higher
+
+Everything here moves detection quality, because that is the only thing that moves the
+score. Ordered by expected value per unit of effort:
+
+1. **Lower `THRESHOLD`.** The perturbation table says extra detections are nearly free and
+   misses are expensive, so the optimum sits well below the usual 0.5. Sweep it with
+   `tools/validate.py --threshold ...`; it costs nothing beyond one detection pass.
+2. **More models in the ensemble.** `detect_stack` averages heatmaps and offsets across
+   models. Averaging is exactly the operation that suppresses localisation jitter, which is
+   the dominant error term — the same mechanism that makes the 4-flip TTA worth its cost.
+3. **More steps / a wider model**, sized by `tools/benchmark.py`. An A10G has 24 GB, so
+   `--batch-size 16` or more is available and raises images/second.
+4. **`fill_gap=1`.** If the detector misses a frame, the track survives (`max_gap=1`) but
+   the crossing is skipped because the rule needs both endpoints. Interpolating across a
+   one-frame hole recovers those events with a small position error, and partial credit
+   beats none. Sweep with `--fill-gap 0 1`.
+
+Measured dead ends, so you do not spend GPU time rediscovering them:
+
+- **Trajectory smoothing** — see the table above. Costs 22 points on exact centres.
+- **`channels_last`** — 5.2× slower here.
+- **Per-query tracking** — association over a full 500-frame recording is strictly more
+  stable than over a 20-frame window, and costs nothing because each query simply reads its
+  window off the global tracks.
+- **A classical dark-blob detector** — the annotated centre is the centroid of a soft,
+  radially symmetric blob (peak contrast 0.27, radius ~8 px), and a matched-filter peak
+  finder lands 2.7 px away on average. That is off the bottom of the jitter table.
 
 ## Constraints
 

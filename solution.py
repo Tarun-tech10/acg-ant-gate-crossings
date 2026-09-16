@@ -37,6 +37,7 @@ LR = 2e-3
 THRESHOLD = 0.30
 MAX_DIST = 25.0
 MAX_GAP = 1
+FILL_GAP = 0
 MAX_EVENTS = 200
 
 
@@ -102,7 +103,7 @@ def main():
     log("associating tracks and extracting crossings")
     queries = [(r.fr, r.g) for r in test.itertuples()]
     preds = predict_events(queries, test_chains, pred_centers,
-                           max_dist=MAX_DIST, max_gap=MAX_GAP)
+                           max_dist=MAX_DIST, max_gap=MAX_GAP, fill_gap=FILL_GAP)
     log(f"mean predicted events per query {np.mean([len(p) for p in preds]):.2f}")
 
     out = pd.DataFrame({
