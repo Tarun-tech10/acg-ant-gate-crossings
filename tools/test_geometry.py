@@ -128,6 +128,45 @@ def _():
     assert row_score([], [[10.0, 1, 0.5]]) == 0.0
 
 
+@check("targets: every centre gets a heatmap peak of exactly 1.0")
+def _():
+    # Regression guard. The focal loss identifies positives by gt == 1. Rendering the
+    # Gaussian at the true sub-pixel centre leaves the peak just below 1.0, which
+    # empties the positive set and silently trains the model to predict zero
+    # everywhere -- the loss still falls, and the detector returns nothing.
+    from acg.train import make_targets, to_pixel_centers
+    centres = np.array([[0.5031, 0.5017], [0.1234, 0.8765], [0.9, 0.1], [0.25, 0.25]])
+    hm, off, msk = make_targets(to_pixel_centers([centres]))
+    n_peaks = int((hm >= 1.0 - 1e-6).sum())
+    assert n_peaks == len(centres), f"{n_peaks} exact peaks for {len(centres)} centres"
+
+
+@check("targets: peak pixel plus its offset reconstructs the exact centre")
+def _():
+    from acg.train import make_targets, to_pixel_centers
+    centres = np.array([[0.5031, 0.5017], [0.1234, 0.8765], [0.777, 0.333]])
+    padded = to_pixel_centers([centres])[0]
+    hm, off, msk = make_targets([padded])
+    ys, xs = np.nonzero(hm[0, 0] >= 1.0 - 1e-6)
+    got = sorted((float(x + off[0, 0, y, x]), float(y + off[0, 1, y, x]))
+                 for y, x in zip(ys, xs))
+    want = sorted((float(a), float(b)) for a, b in padded)
+    for (gx, gy), (wx, wy) in zip(got, want):
+        assert abs(gx - wx) < 1e-3 and abs(gy - wy) < 1e-3, f"{(gx, gy)} vs {(wx, wy)}"
+
+
+@check("loss: the positive term is live, so predicting zero is penalised")
+def _():
+    import torch
+    from acg.train import focal_loss, make_targets, to_pixel_centers
+    hm, _, _ = make_targets(to_pixel_centers([np.array([[0.5031, 0.5017]])]))
+    gt = torch.from_numpy(hm)
+    all_negative = torch.full_like(gt, -8.0)      # sigmoid ~ 0 everywhere
+    near_perfect = torch.where(gt >= 1.0 - 1e-6, 8.0, -8.0)
+    assert focal_loss(all_negative, gt) > 5.0, "an all-zero prediction is not penalised"
+    assert focal_loss(near_perfect, gt) < focal_loss(all_negative, gt) / 10
+
+
 def data_checks(data_dir):
     train, _, centers = load_tables(data_dir)
     chains = build_sequences(list(train["fr"]))

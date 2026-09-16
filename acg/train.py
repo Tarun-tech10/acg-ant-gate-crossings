@@ -40,13 +40,19 @@ def make_targets(pixel_centers, sigma=SIGMA, radius=OFF_RADIUS):
     rad = int(np.ceil(3 * sigma))
     for i, cs in enumerate(pixel_centers):
         for cx, cyp in cs:
-            x0, x1 = max(0, int(cx) - rad), min(W, int(cx) + rad + 2)
-            y0, y1 = max(0, int(cyp) - rad), min(PAD_H, int(cyp) + rad + 2)
+            # The Gaussian is centred on the ROUNDED pixel so its peak is exactly 1.0.
+            # The focal loss identifies positives by gt == 1, so a peak rendered at the
+            # true sub-pixel location would leave the positive set empty and train the
+            # model to predict zero everywhere. Sub-pixel accuracy is carried by the
+            # offset field below, which still points at the exact centre.
+            px, py = int(round(float(cx))), int(round(float(cyp)))
+            x0, x1 = max(0, px - rad), min(W, px + rad + 1)
+            y0, y1 = max(0, py - rad), min(PAD_H, py + rad + 1)
             if x0 >= x1 or y0 >= y1:
                 continue
             yy, xx = np.mgrid[y0:y1, x0:x1]
+            g = np.exp(-((xx - px) ** 2 + (yy - py) ** 2) / (2 * sigma * sigma))
             dx, dy = cx - xx, cyp - yy
-            g = np.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma))
             np.maximum(hm[i, 0, y0:y1, x0:x1], g, out=hm[i, 0, y0:y1, x0:x1])
             near = (np.abs(dx) <= radius) & (np.abs(dy) <= radius)
             sel = near & (g >= hm[i, 0, y0:y1, x0:x1] - 1e-6)
