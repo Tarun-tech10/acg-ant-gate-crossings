@@ -176,6 +176,7 @@ learned and has no tunable parameters.
 | `acg/detect.py` | flip-averaged decoding to sub-pixel centres |
 | `acg/track.py` | association and the crossing-extraction geometry |
 | `acg/metric.py` | the official Hungarian row metric |
+| `tools/test_geometry.py` | asserts the crossing rule and metric against the statement |
 | `tools/ceiling.py` | reproduces the evidence above (CPU only, ~1 min) |
 | `tools/validate.py` | held-out-recording validation, end to end |
 | `tools/benchmark.py` | GPU throughput probe used to size the step budget |
@@ -187,6 +188,7 @@ learned and has no tunable parameters.
 ```bash
 pip install -r requirements.txt          # install torch for your CUDA build first
 
+python3 tools/test_geometry.py --data data   # CPU, seconds: geometry + metric checks
 python3 tools/ceiling.py --data data     # CPU, ~1 min: reproduces the tables above
 python3 tools/benchmark.py               # step time on this GPU -> recommended STEPS
 python3 solution.py data submission.csv  # the graded run
