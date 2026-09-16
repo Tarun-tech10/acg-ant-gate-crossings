@@ -49,6 +49,15 @@ gate has a near-zero signed distance, so tiny position noise flips the sign back
 and manufactures crossings that are not in the target list. Every spurious event also
 inflates the metric's denominator.
 
+**The pixel noise is not what stops you.** Treating each ant as a template plus the
+described noise, the Cramér–Rao bound on centre localisation works out at **0.057 px**
+median from real background-subtracted patches (0.097 px for the faintest decile), after
+subtracting the gradient energy the noise itself contributes. That is an order of magnitude
+finer than the 0.5 px that already costs 13 points. It is an idealised bound — it assumes a
+known template and ignores overlapping ants — but the direction is unambiguous: the
+information is present in the pixels, so accuracy is limited by the model and its training
+budget, not by the sensor noise the task describes. Spending the budget on the detector pays.
+
 Two consequences drive the design:
 
 - The detector head regresses a **dense sub-pixel offset field**, not just a heatmap peak,
