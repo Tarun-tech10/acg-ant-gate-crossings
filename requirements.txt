@@ -1,5 +1,5 @@
-# Install torch for your CUDA build first, e.g. for CUDA 12.1:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Install torch built for your CUDA version first, following the official selector
+# at pytorch.org (the CPU wheel will not run this solution).
 #
 # torch >= 2.4 is required for the device-first torch.amp API
 # (torch.amp.GradScaler("cuda", ...) / torch.amp.autocast("cuda", ...)).

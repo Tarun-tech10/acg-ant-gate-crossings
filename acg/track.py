@@ -12,6 +12,15 @@ def track_chain(centers, max_dist=25.0, max_gap=1):
 
     centers: list (per chain frame) of (n,2) normalised centres.
     Returns list of (n,) int arrays with a track id per detection.
+
+    `max_gap` is how many frames may separate a track's last detection from the
+    current frame, so 1 means consecutive frames only and a single missed
+    detection ends the track; 2 lets a track survive one missing frame. Pair
+    `max_gap=2` with `fill_gap=1` in `window_events` to also recover the crossing
+    that the hole would otherwise hide.
+
+    The gate scales with the gap, since an ant unseen for two frames may have
+    travelled twice as far.
     """
     ids = [np.full(len(c), -1, dtype=np.int64) for c in centers]
     active = []  # (track_id, last_frame, last_xy_px)

@@ -236,10 +236,12 @@ score. Ordered by expected value per unit of effort:
    the dominant error term — the same mechanism that makes the 4-flip TTA worth its cost.
 3. **More steps / a wider model**, sized by `tools/benchmark.py`. An A10G has 24 GB, so
    `--batch-size 16` or more is available and raises images/second.
-4. **`fill_gap=1`.** If the detector misses a frame, the track survives (`max_gap=1`) but
-   the crossing is skipped because the rule needs both endpoints. Interpolating across a
-   one-frame hole recovers those events with a small position error, and partial credit
-   beats none. Sweep with `--fill-gap 0 1`.
+4. **`max_gap=2` together with `fill_gap=1`.** These two go as a pair. `max_gap` is the
+   largest frame separation association will bridge, so the default `1` means
+   consecutive-only and one missed detection ends the track; `2` lets the track survive a
+   one-frame hole. Even then the crossing rule needs a position at *both* endpoints, so
+   `fill_gap=1` interpolates across the hole. Partial credit beats none. Sweep with
+   `--fill-gap 0 1`, which is already crossed against `max_gap` in `tools/validate.py`.
 
 Measured dead ends, so you do not spend GPU time rediscovering them:
 
@@ -254,7 +256,9 @@ Measured dead ends, so you do not spend GPU time rediscovering them:
 
 ## Constraints
 
-Weights are randomly initialised and trained only on the public training frames and the
-centres in `frame_training.csv`. No external data, no downloaded weights, no network access,
-no test labels. Test frames are used for forward inference and for their own per-recording
-background statistic only.
+Every weight starts from a random initialisation inside `acg/model.py` and is fitted
+entirely on the public training frames and the centres in `frame_training.csv`. The run is
+offline and self-contained: the only inputs it opens are the files under the public
+directory. Test frames are used for forward inference and for their own per-recording
+background statistic; test targets are never read, and no decode parameter is tuned on
+them — `tools/validate.py` tunes on held-out *training* recordings.
