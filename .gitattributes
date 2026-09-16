@@ -1,0 +1,5 @@
+# Keep CSV bytes exactly as committed. JSON cells contain embedded newlines and any
+# line-ending rewrite on checkout would shift character offsets inside them.
+*.csv -text
+*.json -text
+*.png binary
